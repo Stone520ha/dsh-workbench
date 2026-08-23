@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import vm from 'node:vm'
 
 interface Registration { id: string; factory: (require: (specifier: string) => unknown) => Record<string, unknown> }
@@ -27,7 +29,7 @@ test('publish manifest declares a canvas-only DSH dynamic client package', async
 })
 
 test('Host entry is inert and does not create a second runtime', async () => {
-  const entry = await import('../lib/index.js')
+  const entry = await import(pathToFileURL(path.resolve('lib/index.js')).href)
   assert.equal(entry.name, 'dsh-workbench')
   assert.deepEqual(Array.from(entry.inject as readonly string[]), [])
   let touched = false
