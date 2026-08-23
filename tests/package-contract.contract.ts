@@ -37,16 +37,23 @@ test('lib/client.js registers one DSH loader factory and exposes only plugin ent
   vm.runInNewContext(code, sandbox, { filename: 'lib/client.js' })
   assert.ok(registration)
   assert.equal(registration!.id, 'dsh-workbench')
-  const fakeReact = {
-    createElement: () => null,
-    useCallback: (fn: unknown) => fn,
-    useEffect: () => undefined,
-    useMemo: (fn: () => unknown) => fn(),
-    useRef: (value: unknown) => ({ current: value }),
-    useState: (value: unknown) => [value, () => undefined],
+
+  // Mirror the DSH web shell's static module seed rather than maintaining a
+  // tiny React mock. canvas-harness legitimately imports jsx-runtime and may
+  // initialize React context at module load even though no Canvas is mounted.
+  const React = await import('react')
+  const ReactJsxRuntime = await import('react/jsx-runtime')
+  const ReactDom = await import('react-dom')
+  const ReactDomClient = await import('react-dom/client')
+  const externals: Record<string, unknown> = {
+    react: React,
+    'react/jsx-runtime': ReactJsxRuntime,
+    'react-dom': ReactDom,
+    'react-dom/client': ReactDomClient,
   }
+
   const exports = registration!.factory((specifier) => {
-    if (specifier === 'react') return fakeReact
+    if (specifier in externals) return externals[specifier]
     throw new Error(`unexpected external ${specifier}`)
   })
   assert.deepEqual(Object.keys(exports).sort(), ['apply', 'inject'])
