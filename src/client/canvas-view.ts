@@ -130,12 +130,10 @@ function syncConversation(
   order: readonly string[],
   nodes: ReadonlyMap<string, DshChatNode>,
 ): void {
-  const alive = new Set<string>()
   store.batch(() => {
     order.forEach((key, index) => {
       const source = nodes.get(key)
       if (!source) return
-      alive.add(key)
       const id = nodeIdFor(key)
       const role = roleOf(source)
       const text = chatText(source).trim() || '(empty)'
@@ -174,16 +172,10 @@ function syncConversation(
         },
       })
     })
-
-    // Only DSH-owned nodes are lifecycle-bound to the Session timeline.
-    // Local notes/artifacts have no dshKey and must survive chat paging/reloads.
-    for (const node of store.getAllNodes()) {
-      const dshKey = typeof node.data === 'object' && node.data !== null
-        ? (node.data as { dshKey?: unknown }).dshKey
-        : undefined
-      if (typeof dshKey === 'string' && !alive.has(dshKey)) store.removeNode(node.id)
-    }
   })
+  // Do not delete persisted DSH nodes merely because they are absent from the
+  // current paged Session window. Older history can be loaded lazily; the
+  // canvas is intentionally a superset of the currently materialized chat list.
 }
 
 function selectedContext(store: CanvasStore, selection: readonly (NodeId | string)[]): string {
