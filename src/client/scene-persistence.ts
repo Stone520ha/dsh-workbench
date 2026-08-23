@@ -135,8 +135,9 @@ export function saveCanvasScene(sessionId: string, scene: SerializedScene): Prom
     }
   })
   saveQueues.set(sessionId, next)
-  void next.finally(() => {
+  const cleanup = () => {
     if (saveQueues.get(sessionId) === next) saveQueues.delete(sessionId)
-  })
+  }
+  void next.then(cleanup, cleanup)
   return next
 }
