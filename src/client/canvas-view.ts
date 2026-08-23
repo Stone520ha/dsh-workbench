@@ -2,7 +2,6 @@ import * as React from 'react'
 import {
   asNodeId,
   createCanvasStore,
-  fromSerialized,
   getContext,
   storeToJSON,
   validateImageInput,
@@ -12,6 +11,7 @@ import {
 } from '@canvas-harness/core'
 import { Canvas, CanvasProvider } from '@canvas-harness/react'
 import { imageNodeToPromptPart, type CanvasPromptPart } from './image-context.js'
+import { loadCanvasScene, readLegacyScene, saveCanvasScene } from './scene-persistence.js'
 
 interface DshChatNode {
   key?: string
@@ -53,36 +53,18 @@ interface ImageInputChangeEventLike {
   target: { files: FileList | null; value: string }
 }
 
+interface SceneHydration {
+  sessionId: string
+  scene?: Scene
+  ready: boolean
+}
+
 type CanvasTool = 'select' | 'arrow'
 
 const CARD_W = 360
 const CARD_H = 132
 const ROW_GAP = 172
 const SAVE_DEBOUNCE_MS = 180
-
-function storageKey(sessionId: string): string {
-  return `dsh:infinite-canvas:${sessionId}`
-}
-
-function readScene(sessionId: string): Scene | undefined {
-  try {
-    const raw = globalThis.localStorage?.getItem(storageKey(sessionId))
-    if (!raw) return undefined
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { nodes?: unknown }).nodes)) return undefined
-    return fromSerialized(parsed)
-  } catch {
-    return undefined
-  }
-}
-
-function writeScene(sessionId: string, store: CanvasStore): void {
-  try {
-    globalThis.localStorage?.setItem(storageKey(sessionId), JSON.stringify(storeToJSON(store)))
-  } catch {
-    // Persistence is best-effort. Quota/private-mode failures must not break the Session.
-  }
-}
 
 function blockText(value: unknown): string {
   if (typeof value === 'string') return value
@@ -254,10 +236,18 @@ function addNote(store: CanvasStore): void {
 export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactNode {
   const order = props.useSession(snapshot => snapshot.chat.order)
   const nodes = props.useSession(snapshot => snapshot.chat.nodes)
-  const store = React.useMemo(() => {
-    const scene = readScene(props.sessionId)
-    return createCanvasStore(scene ? { initial: scene } : {})
-  }, [props.sessionId])
+  const legacyScene = React.useMemo(() => readLegacyScene(props.sessionId), [props.sessionId])
+  const [hydration, setHydration] = React.useState<SceneHydration>(() => ({
+    sessionId: props.sessionId,
+    scene: legacyScene,
+    ready: false,
+  }))
+  const activeScene = hydration.sessionId === props.sessionId ? hydration.scene : legacyScene
+  const storageReady = hydration.sessionId === props.sessionId && hydration.ready
+  const store = React.useMemo(
+    () => createCanvasStore(activeScene ? { initial: activeScene } : {}),
+    [props.sessionId, activeScene],
+  )
   const [selectionCount, setSelectionCount] = React.useState(() => store.getSelection().length)
   const [tool, setTool] = React.useState<CanvasTool>('select')
   const [prompt, setPrompt] = React.useState('')
@@ -265,12 +255,29 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
   const [notice, setNotice] = React.useState<string | null>(null)
 
   React.useEffect(() => {
+    let cancelled = false
+    void loadCanvasScene(props.sessionId).then((scene) => {
+      if (cancelled) return
+      setHydration({
+        sessionId: props.sessionId,
+        scene: scene ?? legacyScene,
+        ready: true,
+      })
+    })
+    return () => { cancelled = true }
+  }, [props.sessionId, legacyScene])
+
+  React.useEffect(() => {
     syncConversation(store, order, nodes)
   }, [store, order, nodes])
 
   React.useEffect(() => {
+    if (!storageReady) return undefined
     let timer: ReturnType<typeof setTimeout> | undefined
-    const persistNow = () => writeScene(props.sessionId, store)
+    const persistNow = () => {
+      const snapshot = storeToJSON(store)
+      void saveCanvasScene(props.sessionId, snapshot).catch(error => setNotice(errorText(error)))
+    }
     const schedulePersist = () => {
       if (timer !== undefined) clearTimeout(timer)
       timer = setTimeout(() => {
@@ -284,6 +291,7 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
     })
     const offChange = store.subscribe('change', schedulePersist)
     const offCamera = store.subscribe('camera', schedulePersist)
+    setSelectionCount(store.getSelection().length)
     return () => {
       if (timer !== undefined) clearTimeout(timer)
       persistNow()
@@ -291,7 +299,7 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
       offChange()
       offCamera()
     }
-  }, [props.sessionId, store])
+  }, [props.sessionId, store, storageReady])
 
   const h = React.createElement
   const useAsContext = (): void => {
@@ -299,7 +307,7 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
     if (context) props.inputActions.setDraft(`${context}\n\nMy request: `)
   }
   const addCanvasImages = (files: readonly File[]): void => {
-    if (files.length === 0) return
+    if (files.length === 0 || !storageReady) return
     try {
       for (const file of files) validateImageInput(file)
     } catch (error) {
@@ -328,7 +336,7 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
   }
   const askAgent = (): void => {
     const request = prompt.trim()
-    if (!request || sending) return
+    if (!request || sending || !storageReady) return
 
     let imageParts: CanvasPromptPart[]
     try {
@@ -356,13 +364,15 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
   }
   const toolButton = (value: CanvasTool, label: string): React.ReactNode => h('button', {
     type: 'button',
+    disabled: !storageReady,
     onClick: () => setTool(value),
     'aria-pressed': tool === value,
     style: {
       pointerEvents: 'auto', border: '1px solid rgba(127,127,127,.22)', borderRadius: 10,
-      padding: '7px 11px', cursor: 'pointer',
+      padding: '7px 11px', cursor: storageReady ? 'pointer' : 'default',
       background: tool === value ? '#eef1ff' : 'rgba(255,255,255,.94)',
-      color: tool === value ? '#3346b8' : '#333', fontWeight: tool === value ? 650 : 500,
+      color: !storageReady ? '#999' : tool === value ? '#3346b8' : '#333',
+      fontWeight: tool === value ? 650 : 500,
     },
   }, label)
 
@@ -402,18 +412,21 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
         toolButton('arrow', 'Link'),
         h('button', {
           type: 'button',
+          disabled: !storageReady,
           onClick: () => { setTool('select'); addNote(store) },
           style: {
             pointerEvents: 'auto', border: '1px solid rgba(127,127,127,.22)',
-            borderRadius: 10, padding: '7px 11px', cursor: 'pointer',
-            background: 'rgba(255,255,255,.94)', color: '#333',
+            borderRadius: 10, padding: '7px 11px', cursor: storageReady ? 'pointer' : 'default',
+            background: 'rgba(255,255,255,.94)', color: storageReady ? '#333' : '#999',
           },
         }, '+ Note'),
         h('label', {
+          'aria-disabled': !storageReady,
           style: {
-            position: 'relative', pointerEvents: 'auto', border: '1px solid rgba(127,127,127,.22)',
-            borderRadius: 10, padding: '7px 11px', cursor: 'pointer',
-            background: 'rgba(255,255,255,.94)', color: '#333',
+            position: 'relative', pointerEvents: storageReady ? 'auto' : 'none',
+            border: '1px solid rgba(127,127,127,.22)', borderRadius: 10,
+            padding: '7px 11px', cursor: storageReady ? 'pointer' : 'default',
+            background: 'rgba(255,255,255,.94)', color: storageReady ? '#333' : '#999',
           },
         },
           '+ Image',
@@ -421,6 +434,7 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
             type: 'file',
             accept: 'image/png,image/jpeg',
             multiple: true,
+            disabled: !storageReady,
             onChange: (event: ImageInputChangeEventLike) => {
               const files = event.target.files ? Array.from(event.target.files) : []
               event.target.value = ''
@@ -435,12 +449,14 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
         ),
         h('button', {
           type: 'button',
-          disabled: selectionCount === 0,
+          disabled: selectionCount === 0 || !storageReady,
           onClick: useAsContext,
           style: {
             pointerEvents: 'auto', border: '1px solid rgba(127,127,127,.22)',
-            borderRadius: 10, padding: '7px 11px', cursor: selectionCount ? 'pointer' : 'default',
-            background: 'rgba(255,255,255,.94)', color: selectionCount ? '#333' : '#999',
+            borderRadius: 10, padding: '7px 11px',
+            cursor: selectionCount && storageReady ? 'pointer' : 'default',
+            background: 'rgba(255,255,255,.94)',
+            color: selectionCount && storageReady ? '#333' : '#999',
           },
         }, 'Use as context'),
       ),
@@ -463,10 +479,12 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
       },
         h('input', {
           value: prompt,
-          disabled: sending,
-          placeholder: selectionCount > 0
-            ? `Ask Agent about ${selectionCount} selected object${selectionCount === 1 ? '' : 's'}…`
-            : 'Ask Agent…',
+          disabled: sending || !storageReady,
+          placeholder: !storageReady
+            ? 'Loading canvas…'
+            : selectionCount > 0
+              ? `Ask Agent about ${selectionCount} selected object${selectionCount === 1 ? '' : 's'}…`
+              : 'Ask Agent…',
           onChange: (event: InputChangeEventLike) => setPrompt(event.target.value),
           onKeyDown: (event: InputKeyboardEventLike) => {
             if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
@@ -482,16 +500,25 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
         }),
         h('button', {
           type: 'button',
-          disabled: prompt.trim() === '' || sending,
+          disabled: prompt.trim() === '' || sending || !storageReady,
           onClick: askAgent,
           style: {
             border: 0, borderRadius: 10, padding: '8px 13px', fontWeight: 650,
-            background: prompt.trim() && !sending ? '#4f6df5' : 'rgba(127,127,127,.12)',
-            color: prompt.trim() && !sending ? '#fff' : '#999',
-            cursor: prompt.trim() && !sending ? 'pointer' : 'default',
+            background: prompt.trim() && !sending && storageReady ? '#4f6df5' : 'rgba(127,127,127,.12)',
+            color: prompt.trim() && !sending && storageReady ? '#fff' : '#999',
+            cursor: prompt.trim() && !sending && storageReady ? 'pointer' : 'default',
           },
         }, sending ? 'Sending…' : 'Ask Agent'),
       ),
+      !storageReady ? h('div', {
+        role: 'status',
+        'aria-live': 'polite',
+        style: {
+          position: 'absolute', inset: 0, zIndex: 80, display: 'grid', placeItems: 'center',
+          background: 'rgba(251,251,252,.72)', backdropFilter: 'blur(1px)', pointerEvents: 'auto',
+          fontSize: 13, color: '#666',
+        },
+      }, 'Loading canvas…') : null,
     ),
   )
 }
