@@ -74,6 +74,6 @@ test('lib/client.js registers one DSH loader factory and exposes only plugin ent
     throw new Error(`unexpected external ${specifier}`)
   })
   assert.deepEqual(Object.keys(exports).sort(), ['apply', 'inject'])
-  assert.deepEqual(Array.from(exports.inject as string[]), ['slots', 'sessions'])
+  assert.deepEqual(Array.from(exports.inject as string[]), ['slots', 'sessions', 'workspaces'])
   assert.equal(typeof exports.apply, 'function')
 })
