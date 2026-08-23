@@ -3,6 +3,7 @@ import { InfiniteCanvasView } from './canvas-view.js'
 import { resolveHostFilePath } from './file-context.js'
 import type { HistoricalImageRef, LoadedHistoricalImage } from './historical-image.js'
 import type { CanvasPromptPart } from './image-context.js'
+import { canonicalWebUrl } from './web-context.js'
 
 interface SlotRegistryLike {
   inject(name: string, setup: () => (() => void) | void): () => void
@@ -47,14 +48,26 @@ function resultFailureMessage(prefix: string, result: Extract<SessionResultLike<
   return detail ? `${prefix}: ${detail}` : prefix
 }
 
+function openSafeWebUrl(value: string): void {
+  const url = canonicalWebUrl(value)
+  if (!url) throw new Error('Canvas Web Node has an invalid or unsafe URL')
+  const browser = globalThis as typeof globalThis & {
+    open?: (url?: string | URL, target?: string, features?: string) => Window | null
+  }
+  if (typeof browser.open !== 'function') throw new Error('Browser URL opening is unavailable')
+  const opened = browser.open(url, '_blank', 'noopener,noreferrer')
+  if (opened === null) throw new Error('Browser blocked opening the Web Node')
+}
+
 /**
  * Canvas-only DSH client contribution.
  *
  * DSH keeps ownership of Session, conversation input, Agent Loop, tools,
  * Skills and MCP. This plugin contributes the conversation view, routes
  * selected Image Nodes through the public Session prompt face, loads durable
- * history images through SessionFace.readAttachment, and opens produced File
- * Nodes through the public Workspaces path opener.
+ * history images through SessionFace.readAttachment, opens produced File
+ * Nodes through the public Workspaces path opener, and hands structured Web
+ * Nodes to a safe HTTP(S)-only browser tab.
  */
 export function createInfiniteCanvasClientPlugin() {
   return {
@@ -87,6 +100,7 @@ export function createInfiniteCanvasClientPlugin() {
           const cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
           await ctx.workspaces.openPath(resolveHostFilePath(cwd, path))
         },
+        openWebUrl: openSafeWebUrl,
       })
 
       ctx.slots.inject('conversation.view', () => ctx.slots.register({
