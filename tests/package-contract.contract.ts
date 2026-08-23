@@ -5,7 +5,7 @@ import vm from 'node:vm'
 
 interface Registration { id: string; factory: (require: (specifier: string) => unknown) => Record<string, unknown> }
 
-test('publish manifest declares a DSH dynamic client package and closed exports', async () => {
+test('publish manifest declares a canvas-only DSH dynamic client package', async () => {
   const pkg = JSON.parse(await readFile('package.json', 'utf8')) as any
   assert.equal(pkg.name, 'dsh-workbench')
   assert.equal(pkg.version, '0.4.0-beta.0')
@@ -15,8 +15,7 @@ test('publish manifest declares a DSH dynamic client package and closed exports'
   assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(pkg.exports['./cordis.patch.yml'], './cordis.patch.yml')
   assert.equal(pkg.dsh.client.platform, 'web')
-  assert.ok(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-layout'))
-  assert.ok(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-conversation'))
+  assert.deepEqual(pkg.dsh.client.inject, ['@deepseek-ai/dsh-client-ui-conversation'])
   assert.ok(pkg.files.includes('THIRD_PARTY_NOTICES.txt'))
   const patch = await readFile('cordis.patch.yml', 'utf8')
   assert.match(patch, /id: dsh-workbench/)
@@ -25,6 +24,17 @@ test('publish manifest declares a DSH dynamic client package and closed exports'
   assert.match(notices, /@canvas-harness\/core/u)
   assert.match(notices, /@canvas-harness\/react/u)
   assert.match(notices, /MIT/u)
+})
+
+test('Host entry is inert and does not create a second runtime', async () => {
+  const entry = await import('../lib/index.js')
+  assert.equal(entry.name, 'dsh-workbench')
+  assert.deepEqual(Array.from(entry.inject as readonly string[]), [])
+  let touched = false
+  entry.apply(new Proxy({}, {
+    get() { touched = true; throw new Error('canvas MVP Host entry must not touch DSH services') },
+  }) as never)
+  assert.equal(touched, false)
 })
 
 test('lib/client.js registers one DSH loader factory and exposes only plugin entry face', async () => {
