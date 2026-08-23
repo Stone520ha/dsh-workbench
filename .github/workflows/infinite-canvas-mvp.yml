@@ -29,6 +29,9 @@ jobs:
           npm run build
           npm run build:package
 
+      - name: Canvas 250-node scale smoke
+        run: npm run test:canvas-scale
+
       - name: Verify package contracts
         run: npm run test:package
 
