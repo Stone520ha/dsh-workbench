@@ -263,7 +263,6 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
   const [prompt, setPrompt] = React.useState('')
   const [sending, setSending] = React.useState(false)
   const [notice, setNotice] = React.useState<string | null>(null)
-  const imageInputRef = React.useRef<HTMLInputElement | null>(null)
 
   React.useEffect(() => {
     syncConversation(store, order, nodes)
@@ -386,20 +385,6 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
         background: { color: '#fbfbfc', pattern: 'dots', gap: 24 },
         selectionColor: '#4f6df5',
       }),
-      h('input', {
-        ref: imageInputRef,
-        type: 'file',
-        accept: 'image/png,image/jpeg',
-        multiple: true,
-        onChange: (event: ImageInputChangeEventLike) => {
-          const files = event.target.files ? Array.from(event.target.files) : []
-          event.target.value = ''
-          addCanvasImages(files)
-        },
-        style: { display: 'none' },
-        'aria-hidden': true,
-        tabIndex: -1,
-      }),
       h('div', {
         style: {
           position: 'absolute', top: 12, left: 12, right: 12, zIndex: 30,
@@ -424,15 +409,30 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
             background: 'rgba(255,255,255,.94)', color: '#333',
           },
         }, '+ Note'),
-        h('button', {
-          type: 'button',
-          onClick: () => imageInputRef.current?.click(),
+        h('label', {
           style: {
-            pointerEvents: 'auto', border: '1px solid rgba(127,127,127,.22)',
+            position: 'relative', pointerEvents: 'auto', border: '1px solid rgba(127,127,127,.22)',
             borderRadius: 10, padding: '7px 11px', cursor: 'pointer',
             background: 'rgba(255,255,255,.94)', color: '#333',
           },
-        }, '+ Image'),
+        },
+          '+ Image',
+          h('input', {
+            type: 'file',
+            accept: 'image/png,image/jpeg',
+            multiple: true,
+            onChange: (event: ImageInputChangeEventLike) => {
+              const files = event.target.files ? Array.from(event.target.files) : []
+              event.target.value = ''
+              addCanvasImages(files)
+            },
+            style: {
+              position: 'absolute', width: 1, height: 1, opacity: 0,
+              overflow: 'hidden', pointerEvents: 'none',
+            },
+            tabIndex: -1,
+          }),
+        ),
         h('button', {
           type: 'button',
           disabled: selectionCount === 0,
