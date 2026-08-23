@@ -1,7 +1,7 @@
 {
   "name": "dsh-workbench",
   "version": "0.4.0-beta.0",
-  "description": "Review-first Artifact and Browser Workbench for DeepSeek Harness",
+  "description": "Infinite Canvas conversation surface and artifact tooling for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -57,6 +57,10 @@
     "node": ">=22"
   },
   "license": "MIT",
+  "dependencies": {
+    "@canvas-harness/core": "^0.1.29",
+    "@canvas-harness/react": "^0.1.29"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-agent": ">=0.1.1-rc.2 <0.2.0",
