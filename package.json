@@ -1,7 +1,7 @@
 {
   "name": "dsh-workbench",
   "version": "0.4.0-beta.0",
-  "description": "Review-first Artifact and Browser Workbench for DeepSeek Harness",
+  "description": "Infinite Canvas conversation surface for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -23,7 +23,6 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-conversation"
       ],
       "platform": "web"
@@ -33,40 +32,38 @@
     "lib/**/*.js",
     "lib/**/*.d.ts",
     "README.md",
-    "ARCHITECTURE.md",
-    "DSH_CONTRACT_AUDIT.md",
-    "TECH_SPIKE.md",
-    "cordis.patch.yml",
     "README.zh-CN.md",
-    "SECURITY.md",
-    "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES.txt",
+    "cordis.patch.yml",
     "LICENSE"
   ],
   "scripts": {
     "clean": "rm -rf dist lib",
     "build": "tsc -p tsconfig.json",
-    "build:package": "rm -rf lib && tsc -p tsconfig.package.json && node scripts/build-client-bundle.mjs",
+    "build:package": "rm -rf lib && tsc -p tsconfig.package.json && node scripts/build-client-bundle.mjs && node scripts/build-third-party-notices.mjs",
     "test": "node --test dist/tests/*.test.js",
     "test:golden": "node --test dist/tests/golden-selection-review.test.js dist/tests/golden-browser-workbench-ux.test.js",
     "test:browser": "node --test dist/tests/browser-*.test.js dist/tests/rpc-browser.e2e.test.js dist/tests/golden-browser-workbench-ux.test.js",
+    "test:canvas-scale": "node --test dist/tests/infinite-canvas-scale.test.js",
+    "test:canvas": "node --test dist/tests/infinite-canvas-scale.test.js dist/tests/image-context.test.js dist/tests/historical-image.test.js dist/tests/file-context.test.js dist/tests/web-context.test.js dist/tests/code-context.test.js dist/tests/scene-persistence.test.js",
     "check": "rm -rf dist && npm run build && npm test",
-    "test:package": "npm run build:package && npm run build && node --test dist/tests/package-contract.contract.js dist/tests/http-route.test.js dist/tests/host-lifecycle.test.js",
+    "test:package": "npm run build:package && npm run build && node --test dist/tests/package-contract.contract.js",
     "verify:install": "npm run build:package && node scripts/verify-install.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "license": "MIT",
+  "dependencies": {
+    "@canvas-harness/core": "^0.1.29",
+    "@canvas-harness/react": "^0.1.29"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-client-runtime": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.1-rc.2 <0.2.0",
-    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.1-rc.2 <0.2.0",
-    "@deepseek-ai/dsh-host-webserver": ">=0.1.1-rc.2 <0.2.0",
-    "@deepseek-ai/dsh-llm": ">=0.1.1-rc.2 <0.2.0",
-    "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2 <0.2.0",
-    "react": "^18.2.0"
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-client-runtime": {
@@ -75,15 +72,24 @@
     "@deepseek-ai/dsh-client-ui-conversation": {
       "optional": true
     },
-    "@deepseek-ai/dsh-client-ui-layout": {
+    "react": {
       "optional": true
     },
-    "react": {
+    "react-dom": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-agent": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-llm": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2 <0.2.0",
     "@types/node": "^22.15.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "typescript": "~5.8.3"
   }
 }

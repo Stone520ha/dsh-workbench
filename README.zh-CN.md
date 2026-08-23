@@ -1,79 +1,125 @@
-# dsh-workbench
+# DSH 无限画布 MVP
 
-面向 DeepSeek Harness（DSH）的 **Review-first Artifact / Browser Workbench**。
+把 DeepSeek Harness（DSH）的会话扩展成原生无限画布视图。
 
-> 当前状态：**0.4.0-beta.0 候选版**。文件/网页修改控制链、Chromium/CDP 浏览器工作台、Agent 提案、逐 Hunk 审核、Apply/Undo、DSH Bundle 形态以及本地安装/卸载烟测已经实现。真实 DSH Profile + 模型 Provider、正常 HTTP/HTTPS 导航、视觉回归和更高强度的文件系统安全仍是发布门。
+这版的架构边界刻意保持简单：
 
-## 核心工作流
+- **DSH 继续负责执行**：Session、Agent Loop、Tools、Skills、MCP、模型 Provider 和提交语义都不重写。
+- **Canvas 负责空间**：节点、连线、选择、上下文组织、本地工作对象和人与 AI 的交互界面。
+- MVP **没有第二套 Agent Loop**，也不会再启动另一套浏览器 / HTTP Host Runtime。
 
-```text
-Artifact + 精确且带版本的 Selection + 用户要求
-                 -> Agent
-                 -> proposed ChangeSet
-                 -> Hunk Review
-                 -> Checkpoint + Version Recheck
-                 -> Apply -> Verify -> Undo
-```
-
-Agent 在 Workbench 任务中默认只能**提出修改**，不能绕过审核直接写文件。
-
-## 已实现
-
-- Artifact / Selection / ChangeSet / Checkpoint 核心协议
-- SHA-256 版本保护与每个 Patch 落盘前的二次版本检查
-- 路径穿越、绝对路径和越界 symlink 防护
-- Hunk 级 Accept / Reject / Comment / revise
-- `workbench_propose` Agent Bridge
-- Workbench 任务期间对 `write/edit/bash/str_replace_editor/terminal_*` 的单 Agent 强制 Guard
-- Code Mode 嵌套 mutation 仍经过同一 Guard
-- 真 Chromium + CDP：Tabs、Screenshot、DOM、Console、Network
-- 截图点击 -> DOM Selection -> Annotation -> Agent -> ChangeSet
-- DOM Selection 带版本，页面变化后旧 Selection 直接冲突
-- DSH Session 级 Browser 隔离，Profile 默认临时
-- UI 使用 `conversation.session.header.utilities` + `shell.overlay`，不替换官方 `details`
-- DSH Bundle：`dsh.bundle.patch` + `cordis.patch.yml`
-- DSH Client Loader 兼容的自注册 `lib/client.js`
-- Host 使用 DSH `webServer.register()`；HTTP RPC 强制 loopback + same-origin + JSON + body cap
-- 网页/源码选择内容明确作为未受信任数据，转义并限制 32 KiB
-
-## 候选安装方式
-
-在真实 DSH 环境中：
-
-```bash
-dsh plugin --profile workbench-beta add ./dsh-workbench-0.4.0-beta.0.tgz
-dsh --profile workbench-beta --dump-config
-dsh --profile workbench-beta
-```
-
-卸载：
-
-```bash
-dsh plugin --profile workbench-beta remove dsh-workbench
-```
-
-当前执行环境没有可运行的 DSH CLI 和真实模型 Provider，因此上面的真实 DSH Profile E2E 仍明确标记为待验证，并未假装通过。
-
-## 当前验证结果
+## 架构
 
 ```text
-npm run check          21 / 21 PASS
-Golden file workflow  PASS
-Golden Browser UX     PASS
-Package contract      PASS
-Tarball install smoke PASS
-Host lifecycle        PASS
-Uninstall cleanup     PASS
+DSH Session / Agent / Tools / Skills / MCP
+                    |
+                    v
+          DSH conversation.view
+                    |
+                    v
+              无限画布
+          (@canvas-harness/*)
+            /       |       \
+        DSH节点    Note     Link
+            \       |       /
+              选择即上下文
+                    |
+                    v
+          DSH InputActions.submit()
+                    |
+                    v
+                DSH Agent
 ```
 
-本地 tarball 安装烟测使用最小 fake runtime peer 来验证“发出去的 Host 入口能够加载和卸载”，它不等于真实 DSH 运行时测试。
+## 当前 MVP 已实现
 
-## 环境限制
+- 注册原生 `conversation.view = canvas`
+- 当前 DSH Session 的会话节点自动映射成 Canvas Node
+- pan / zoom / select / multi-select / drag
+- 可创建并直接编辑本地 Note 节点
+- Arrow / Link 连线工具
+- 使用 canvas-harness Scene Codec 保存完整画布
+- 持久化增加防抖，拖动画布和流式回复时不会每帧写 localStorage
+- 不会因为 DSH 历史消息分页而误删已经沉淀在画布上的旧节点
+- 选中内容通过 canvas-harness `getContext({ selectionOnly: true })` 生成 AI Context，节点与连线关系都可进入上下文
+- 送给 Agent 的画布内容会明确标记为“不可信数据”，避免节点内部文字被误当成系统指令
+- 画布底部可直接 Ask Agent，调用的是 DSH 公共 `InputActions.setDraft()` + `submit()`
+- Agent 仍然运行在原 DSH Session 中，回复通过原会话流产生，再自动同步成新的 Canvas Node
+- Host 入口保持空壳，不启动 Chromium、HTTP Route、文件系统能力或第二套 Agent Runtime
+- `canvas-harness` 与浏览器安全的传递依赖打进单一 DSH Client Bundle；React / ReactDOM 继续由 DSH 提供
+- 打包时自动生成第三方开源许可证清单
 
-当前容器的 Chromium 被系统策略设置为 `URLBlocklist: ["*"]`，正常 HTTP/HTTPS 导航会返回 `ERR_BLOCKED_BY_ADMINISTRATOR`。因此真 Chromium E2E 使用 `about:blank + Page.setDocumentContent` 验证 CDP/DOM/Selection/Screenshot/Apply/Refresh/Undo。正常网络导航仍需在未被管理策略封锁的环境完成。
+## 当前用户闭环
 
-## 尚未关闭的安全边界
+```text
+打开 DSH Session
+      |
+      v
+切换 Canvas
+      |
+      +--> 整理已有对话节点
+      +--> 新建 / 编辑 Note
+      +--> 用 Link 建立关系
+      +--> 选择一个或多个对象
+                  |
+                  v
+              Ask Agent
+                  |
+                  v
+          原 DSH Agent 执行
+                  |
+                  v
+            结果进入 Session
+                  |
+                  v
+           自动成为新画布节点
+```
 
-当前文件系统实现已经做 canonical path、symlink、版本和事务保护，但最终仍是 Node 的普通 path-based I/O。面对能够恶意并发替换父目录的本地进程，仍存在更高强度的 path-component TOCTOU 风险。稳定版应迁移到 DSH `ctx.fs`/sandbox policy 或等价的 no-follow descriptor 后端。
+## 这版明确还没做
 
-详见 [SECURITY.md](./SECURITY.md)。
+MVP 不装作成品，免得工程进度又被 PPT 提前上市。
+
+- **Canvas 还不是默认视图**。DSH 当前源码把 `chat` 写成默认 / fallback view，需要下一步对 DSH 做一个很小的默认视图改造。
+- Image / File / Web / Code / 更丰富的 Artifact 节点还需要各自的 DSH Context Adapter。
+- 图片节点暂时没有接入 DSH 的 draft-image registry，所以当前不会假装“图片选中后模型已经真正看到像素”。
+- 多人实时协作、Presence、权限还没有接入。
+- 团队共享 Skills 与内部资料还没有成为一等 Canvas Object。
+- 当前 Scene 持久化是浏览器本地存储，团队级 / 服务端持久化放到下一阶段。
+- 真实 DSH Profile + 真实模型 Provider 的安装和端到端验证仍是发布门。
+
+## 为什么先用 canvas-harness
+
+MVP 使用 `@canvas-harness/core` 与 `@canvas-harness/react`，因为它能提供我们真正需要的空间能力，同时不夺走 DSH 的 Harness 职责：
+
+- MIT License
+- React 18+
+- Infinite Canvas + Node Graph
+- 自定义节点扩展接口
+- Scene 序列化
+- AI Canvas Context
+- Typed Op Log
+- Presence / SyncAdapter 协作接口
+
+Dim0 同样使用这套 Canvas Engine，因此 Dim0 适合作为多人协作、Agent Write-back、Mini App 等产品能力的参考实现，但 Agent 执行底座仍然使用 DSH。
+
+## 开发验证
+
+```bash
+npm install
+npm run build
+npm run build:package
+npm run test:package
+npm run verify:install
+```
+
+仓库已经加入 Infinite Canvas MVP 的 GitHub Actions 工作流。只有 CI 变绿并在真实 DSH Profile 中完成模型调用后，这个 Draft PR 才应该进入可合并状态。
+
+## 当前开发位置
+
+- Branch：`feat/infinite-canvas-mvp`
+- Issue：`#1 MVP：将 DSH 会话视图升级为无限画布`
+- Draft PR：`#2 MVP: DSH Infinite Canvas conversation surface`
+
+## License
+
+项目代码使用 MIT License。打包过程会自动生成 `THIRD_PARTY_NOTICES.txt`，包含实际被打进浏览器 Bundle 的第三方开源声明。

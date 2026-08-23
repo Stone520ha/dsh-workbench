@@ -9,9 +9,9 @@
     "noEmit": false
   },
   "include": [
-    "src/**/*.ts"
-  ],
-  "exclude": [
-    "src/server/http-transport.ts"
+    "src/index.ts",
+    "src/client/index.ts",
+    "src/client/canvas-client.ts",
+    "src/client/canvas-view.ts"
   ]
 }

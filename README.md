@@ -1,127 +1,125 @@
-# dsh-workbench
+# DSH Infinite Canvas MVP
 
-Review-first Artifact and Browser Workbench for DeepSeek Harness (DSH).
+A native infinite-canvas conversation view for DeepSeek Harness (DSH).
 
-> Status: **0.4.0-beta.0 candidate**. The file/web editing control plane, Chromium/CDP Browser Workbench, Agent proposal bridge, hunk review, Apply/Undo, package bundle shape, and local install/uninstall smoke tests are implemented. A real DSH profile + live provider/model run, unrestricted HTTP/HTTPS navigation, visual regression, and a higher-assurance filesystem backend remain release gates.
+The design boundary is intentionally simple:
 
-## What it does
+- **DSH owns the Agent runtime**: Session, Agent Loop, Tools, Skills, MCP, providers and submission semantics.
+- **The canvas owns the spatial workspace**: nodes, links, selection, context composition, local artifacts and human interaction.
+- There is **no second Agent Loop** and no second browser/HTTP Host runtime in this MVP.
 
-DSH conversation remains the coordination channel; artifacts become explicit work objects:
+## Architecture
 
 ```text
-Artifact + exact versioned Selection + instruction
-                 -> Agent
-                 -> proposed ChangeSet
-                 -> hunk review
-                 -> checkpoint + version recheck
-                 -> apply -> verify -> undo
+DSH Session / Agent / Tools / Skills / MCP
+                    |
+                    v
+          DSH conversation.view
+                    |
+                    v
+             Infinite Canvas
+          (@canvas-harness/*)
+            /       |       \
+        DSH nodes  Notes    Links
+            \       |       /
+             selected context
+                    |
+                    v
+          DSH InputActions.submit()
+                    |
+                    v
+                DSH Agent
 ```
 
-The important product rule is simple: **the Agent proposes; Workbench applies after review**. During an active Workbench task, direct mutation surfaces are guarded so the model cannot promise a preview while quietly changing the workspace.
+## Implemented in the MVP branch
 
-## Implemented
+- native `conversation.view` contribution with id `canvas`
+- current DSH Session conversation nodes mirrored onto an infinite canvas
+- pan, zoom, select, multi-select and drag through `canvas-harness`
+- persistent editable local Note nodes
+- Arrow/Link tool for spatial relationships
+- full canvas Scene persistence using the canvas-harness codec
+- debounced browser persistence so pan/stream updates do not write on every frame
+- paged DSH history is preserved instead of deleting nodes absent from the current loaded chat window
+- selection context uses canvas-harness `getContext({ selectionOnly: true })`, including selected nodes and links
+- selected context is explicitly marked as untrusted data before it reaches the Agent
+- a canvas-native Ask Agent input sends through DSH's public `InputActions.setDraft()` + `submit()` path
+- Agent replies continue through the existing DSH Session and are mirrored back onto the canvas
+- Host entry is intentionally inert: no Chromium, HTTP route, filesystem authority or second Agent runtime
+- `canvas-harness` and browser-safe transitive dependencies are bundled into the single DSH client package; React/ReactDOM remain supplied by DSH
+- generated third-party license notices are included in the package
 
-### Artifact / file control plane
+## Current user flow
 
-- versioned Artifact and Selection protocols
-- normalized Add / Update / Delete / Move ChangeSets
-- SHA-256 content versions
-- path traversal and absolute-path rejection
-- symlink boundary checks
-- atomic writes
-- per-patch TOCTOU version recheck immediately before mutation
-- rollback only for paths actually modified by the current transaction
-- persistent checkpoints with executable-mode preservation
-- hunk-level Accept / Reject / Comment / revise
-- Apply fails closed while review is incomplete
-
-### Agent bridge
-
-- binds work to the exact live DSH Session/Agent
-- workspace root derives only from `agent.session.header.cwd`
-- injects exact text or DOM Selection context
-- registers a task-scoped `workbench_propose` tool
-- denies direct `write`, `edit`, `bash`, `str_replace_editor`, `terminal_open`, and `terminal_send` during review-first work
-- Code Mode nested mutation calls are covered by the same guard contract
-- proposal boundary revalidates stale selections before accepting a ChangeSet
-- webpage/source text is marked as **untrusted data**, escaped, and bounded before entering model context
-
-### Browser Workbench
-
-- real Chromium process lifecycle and CDP connections
-- one browser process/profile per DSH Session
-- ephemeral browser profiles by default
-- tabs, Back / Forward / Reload, screenshot preview
-- URL scheme/domain policy; `file:` is denied
-- DOM inspection by selector or screenshot point
-- interactive element picker using one-time random `Runtime.addBinding` (no wildcard `postMessage`)
-- versioned DOM selections; DOM drift returns `VERSION_CONFLICT`
-- bounded Console and Network capture
-- Annotation Composer -> Agent -> ChangeSet
-- Apply -> preview refresh -> visual verification -> Undo Golden flow
-
-### DSH UI / package integration
-
-- header toggle: additive `conversation.session.header.utilities`
-- drawer: additive `shell.overlay`
-- does **not** replace DSH's single-occupancy `details` slot
-- installable DSH **bundle** via `dsh.bundle.patch`
-- dynamic Client package metadata via `dsh.client`
-- self-registering `lib/client.js` compatible with DSH's `__ModuleLoader__` model
-- Host transport uses the official `webServer.register()` route seam
-- Workbench HTTP route is hard-locked to loopback clients, requires same-origin JSON POSTs, is request-size bounded, and sends `no-store`
-
-## Install candidate
-
-The package is a DSH bundle, so a real DSH installation should install it into a profile rather than merely `npm install` it:
-
-```bash
-dsh plugin --profile workbench-beta add ./dsh-workbench-0.4.0-beta.0.tgz
-dsh --profile workbench-beta --dump-config
-dsh --profile workbench-beta
+```text
+Open a DSH Session
+        |
+        v
+Switch to Canvas
+        |
+        +--> move / arrange existing conversation nodes
+        +--> create and edit Notes
+        +--> draw Links between objects
+        +--> select one or more objects
+                    |
+                    v
+              Ask Agent
+                    |
+                    v
+         original DSH Agent runs
+                    |
+                    v
+        reply appears in Session
+                    |
+                    v
+       reply becomes a canvas node
 ```
 
-The dump should contain a `dsh-workbench` bundle layer. Remove it with:
+## Deliberately not implemented yet
+
+The MVP is not pretending to be the finished system.
+
+- Canvas is not yet the default DSH conversation view. Current DSH source hard-codes `chat` as the fallback/default view.
+- Image, File, Web, Code and richer Artifact nodes still need DSH-specific context adapters.
+- Canvas images are not yet bridged into DSH's draft-image registry, so this branch does not fake visual context support.
+- real-time multiplayer / presence / permissions are not connected yet
+- shared team Skills and internal knowledge sources are not represented as first-class canvas objects yet
+- persistence is browser-local; team/server persistence comes later
+- live installation inside a real DSH profile with a real model/provider remains a release gate
+
+## Why canvas-harness
+
+The MVP uses [`@canvas-harness/core`](https://github.com/winlp4ever/canvas-harness) and `@canvas-harness/react` because they provide the pieces this architecture needs without replacing DSH:
+
+- MIT license
+- React 18+ support
+- infinite canvas and node graph primitives
+- custom node extension points
+- built-in Scene serialization
+- AI scene context generation
+- typed operation log
+- collaboration-ready presence / SyncAdapter interfaces
+
+The project is also the canvas engine used by Dim0, which makes Dim0 useful as a product/reference implementation while DSH remains the execution Harness here.
+
+## Development checks
 
 ```bash
-dsh plugin --profile workbench-beta remove dsh-workbench
-```
-
-The current execution environment does not contain a runnable DSH CLI or live provider credentials, so those exact commands remain a release gate rather than a claimed result.
-
-## Development / verification
-
-```bash
-npm run check
-npm run test:golden
+npm install
+npm run build
+npm run build:package
 npm run test:package
 npm run verify:install
 ```
 
-Current verified state in this build environment:
+The repository contains a GitHub Actions workflow for the MVP branch. A green workflow and a live DSH profile test are required before this draft PR should be treated as merge-ready.
 
-- `npm run check`: **21/21 PASS**
-- Golden workflows: file and Browser UX PASS
-- real local Chromium/CDP tests PASS (using `Page.setDocumentContent` where navigation is blocked by host policy)
-- package contract: DSH bundle/client manifest, loader-factory execution, HTTP security, Host lifecycle PASS
-- tarball install / Host-entry smoke / lifecycle cleanup / uninstall PASS
+## Branch and PR
 
-The local install verifier uses small fake value peers only to prove the shipped Host entry can load and dispose from the tarball. It is **not** a substitute for a real DSH runtime/model E2E.
+- branch: `feat/infinite-canvas-mvp`
+- issue: `#1 MVP：将 DSH 会话视图升级为无限画布`
+- draft PR: `#2 MVP: DSH Infinite Canvas conversation surface`
 
-## Environment limitation
+## License
 
-This execution container has Chromium managed policy `URLBlocklist: ["*"]`. Normal HTTP/HTTPS navigation returns `ERR_BLOCKED_BY_ADMINISTRATOR`. Browser tests therefore validate real Chromium, CDP, DOM selection, screenshot, Console/Network, Apply/refresh/Undo using `about:blank + Page.setDocumentContent`. Unrestricted navigation remains a release gate in a normal environment.
-
-## Security boundary still open
-
-The current workspace implementation performs canonical-path and symlink checks but still uses ordinary Node filesystem path operations. A hostile local process racing parent path components could create a higher-assurance path-TOCTOU problem. Before a security-hardened stable release, mutations should move onto DSH `ctx.fs`/sandbox-policy semantics or an equivalent descriptor/no-follow filesystem backend. See [SECURITY.md](./SECURITY.md).
-
-## Documents
-
-- [Architecture](./ARCHITECTURE.md)
-- [DSH contract audit](./DSH_CONTRACT_AUDIT.md)
-- [Technical spike / reuse decisions](./TECH_SPIKE.md)
-- [Security](./SECURITY.md)
-- [Changelog](./CHANGELOG.md)
-
-The package is intentionally called Beta while the real DSH profile/model gate is still open. Version numbers are cheap; corrupted workspaces are not.
+Project code is MIT. Bundled third-party notices are generated into `THIRD_PARTY_NOTICES.txt` during `build:package`.

@@ -1,0 +1,32 @@
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationSession.tsx b/packages/client/ui-conversation/src/client/skeleton/ConversationSession.tsx
+index c726bcc..canvasfirst 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationSession.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationSession.tsx
+@@ -22,13 +22,20 @@ interface Breadcrumb {
+   subagent: boolean
+ }
+ 
+-const DEFAULT_VIEW_ID = 'chat'
++const SAFE_FALLBACK_VIEW_ID = 'chat'
+ 
+-/** Resolve by id and keep stale persisted selections on the stable Chat fallback. */
++/**
++ * Resolve the active view.
++ *
++ * A fresh Session has no persisted view choice, so the first registered
++ * (order-sorted) view is the default. This lets a contributed view become
++ * the primary conversation surface without replacing ui-conversation.
++ *
++ * A stale persisted id still falls back to Chat, preserving the existing
++ * recovery behavior when a previously installed view disappears.
++ */
+ function resolveActiveView(tabs: readonly ViewTab[], selectedId: string | null): ViewTab | undefined {
+-  const requestedId = selectedId ?? DEFAULT_VIEW_ID
+-  return tabs.find(view => view.id === requestedId)
+-    ?? tabs.find(view => view.id === DEFAULT_VIEW_ID)
++  if (selectedId === null) return tabs[0]
++  return tabs.find(view => view.id === selectedId)
++    ?? tabs.find(view => view.id === SAFE_FALLBACK_VIEW_ID)
+ }
+ 
+ function deriveAncestry(list: SessionListState, id: SessionId): readonly Breadcrumb[] {
