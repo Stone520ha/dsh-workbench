@@ -35,6 +35,16 @@ interface InfiniteCanvasViewProps {
   inputActions: InputActionsLike
 }
 
+interface InputChangeEventLike {
+  target: { value: string }
+}
+
+interface InputKeyboardEventLike {
+  key: string
+  nativeEvent: { isComposing?: boolean }
+  preventDefault(): void
+}
+
 type CanvasTool = 'select' | 'arrow'
 
 const CARD_W = 360
@@ -351,8 +361,8 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
           placeholder: selectionCount > 0
             ? `Ask Agent about ${selectionCount} selected object${selectionCount === 1 ? '' : 's'}…`
             : 'Ask Agent…',
-          onChange: (event: React.ChangeEvent<HTMLInputElement>) => setPrompt(event.target.value),
-          onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
+          onChange: (event: InputChangeEventLike) => setPrompt(event.target.value),
+          onKeyDown: (event: InputKeyboardEventLike) => {
             if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
               event.preventDefault()
               askAgent()
