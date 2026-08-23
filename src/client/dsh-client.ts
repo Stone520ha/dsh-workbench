@@ -1,6 +1,5 @@
 import * as React from 'react'
 import type { WorkbenchClientTransport } from './transport.js'
-import { InfiniteCanvasView } from './canvas-view.js'
 import { WorkbenchOverlay } from './overlay.js'
 
 interface SlotRegistryLike {
@@ -79,13 +78,6 @@ export function createWorkbenchClientPlugin(transport: WorkbenchClientTransport)
     inject: ['slots'],
     apply(ctx: ClientContextLike): void {
       ctx.effect(() => () => opened.close(), 'dsh-workbench: open-state cleanup')
-
-      // Infinite Canvas MVP: DSH remains the Agent/Harness owner. This package
-      // contributes only another native conversation view over the same Session.
-      ctx.slots.inject('conversation.view', () => ctx.slots.register({
-        name: 'conversation.view', id: 'canvas', order: -10, label: 'Canvas',
-      }, InfiniteCanvasView))
-
       ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
         name: 'conversation.session.header.utilities', id: 'dsh-workbench-toggle', order: 90, label: 'Workbench',
       }, HeaderAction))
