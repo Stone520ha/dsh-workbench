@@ -1,5 +1,13 @@
 import * as React from 'react'
-import { asNodeId, createCanvasStore, type CanvasStore, type NodeId } from '@canvas-harness/core'
+import {
+  asNodeId,
+  createCanvasStore,
+  fromSerialized,
+  storeToJSON,
+  type CanvasStore,
+  type NodeId,
+  type Scene,
+} from '@canvas-harness/core'
 import { Canvas, CanvasProvider } from '@canvas-harness/react'
 
 interface DshChatNode {
@@ -27,46 +35,32 @@ interface InfiniteCanvasViewProps {
   inputActions: InputActionsLike
 }
 
-interface PersistedLayout {
-  camera?: { x: number; y: number; z: number }
-  nodes?: Record<string, { x: number; y: number; w: number; h: number }>
-}
-
 const CARD_W = 360
 const CARD_H = 132
 const ROW_GAP = 172
+const SAVE_DEBOUNCE_MS = 180
 
 function storageKey(sessionId: string): string {
   return `dsh:infinite-canvas:${sessionId}`
 }
 
-function readLayout(sessionId: string): PersistedLayout {
+function readScene(sessionId: string): Scene | undefined {
   try {
     const raw = globalThis.localStorage?.getItem(storageKey(sessionId))
-    if (!raw) return {}
-    const value = JSON.parse(raw) as PersistedLayout
-    return value && typeof value === 'object' ? value : {}
+    if (!raw) return undefined
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { nodes?: unknown }).nodes)) return undefined
+    return fromSerialized(parsed)
   } catch {
-    return {}
+    return undefined
   }
 }
 
-function writeLayout(sessionId: string, store: CanvasStore): void {
+function writeScene(sessionId: string, store: CanvasStore): void {
   try {
-    const nodes: PersistedLayout['nodes'] = {}
-    for (const node of store.getAllNodes()) {
-      const dshKey = typeof node.data === 'object' && node.data !== null
-        ? (node.data as { dshKey?: unknown }).dshKey
-        : undefined
-      if (typeof dshKey !== 'string') continue
-      nodes[dshKey] = { x: node.x, y: node.y, w: node.w, h: node.h }
-    }
-    globalThis.localStorage?.setItem(storageKey(sessionId), JSON.stringify({
-      camera: store.getCamera(),
-      nodes,
-    } satisfies PersistedLayout))
+    globalThis.localStorage?.setItem(storageKey(sessionId), JSON.stringify(storeToJSON(store)))
   } catch {
-    // Persistence is a convenience only. A blocked localStorage must not break chat.
+    // Persistence is best-effort. Quota/private-mode failures must not break the Session.
   }
 }
 
@@ -135,7 +129,6 @@ function syncConversation(
   store: CanvasStore,
   order: readonly string[],
   nodes: ReadonlyMap<string, DshChatNode>,
-  persisted: PersistedLayout,
 ): void {
   const alive = new Set<string>()
   store.batch(() => {
@@ -152,15 +145,14 @@ function syncConversation(
         if (existing.content !== content) store.updateNode(id, { content })
         return
       }
-      const saved = persisted.nodes?.[key]
       const fallback = initialPosition(index, role)
       store.addNode({
         id,
         type: 'rect',
-        x: saved?.x ?? fallback.x,
-        y: saved?.y ?? fallback.y,
-        w: saved?.w ?? CARD_W,
-        h: saved?.h ?? CARD_H,
+        x: fallback.x,
+        y: fallback.y,
+        w: CARD_W,
+        h: CARD_H,
         angle: 0,
         groups: [],
         content,
@@ -183,6 +175,8 @@ function syncConversation(
       })
     })
 
+    // Only DSH-owned nodes are lifecycle-bound to the Session timeline.
+    // Local notes/artifacts have no dshKey and must survive chat paging/reloads.
     for (const node of store.getAllNodes()) {
       const dshKey = typeof node.data === 'object' && node.data !== null
         ? (node.data as { dshKey?: unknown }).dshKey
@@ -199,12 +193,18 @@ function selectedContext(store: CanvasStore, selection: readonly (NodeId | strin
   if (selected.length === 0) return ''
   const body = selected.map((node, index) => {
     const meta = typeof node.data === 'object' && node.data !== null
-      ? node.data as { dshKey?: unknown; dshKind?: unknown }
+      ? node.data as { dshKey?: unknown; dshKind?: unknown; localKind?: unknown }
       : {}
+    const id = typeof meta.dshKey === 'string' ? meta.dshKey : node.id
+    const kind = typeof meta.dshKind === 'string'
+      ? meta.dshKind
+      : typeof meta.localKind === 'string'
+        ? meta.localKind
+        : node.type
     return [
       `### Canvas node ${index + 1}`,
-      `id: ${typeof meta.dshKey === 'string' ? meta.dshKey : node.id}`,
-      `kind: ${typeof meta.dshKind === 'string' ? meta.dshKind : node.type}`,
+      `id: ${id}`,
+      `kind: ${kind}`,
       node.content ?? '',
     ].join('\n')
   }).join('\n\n')
@@ -216,30 +216,60 @@ function agentPrompt(store: CanvasStore, selection: readonly (NodeId | string)[]
   return context ? `${context}\n\nMy request: ${request}` : request
 }
 
+function addNote(store: CanvasStore): void {
+  const camera = store.getCamera()
+  const id = asNodeId(store.generateId())
+  store.addNode({
+    id,
+    type: 'rect',
+    x: camera.x + 120,
+    y: camera.y + 110,
+    w: 300,
+    h: 120,
+    angle: 0,
+    groups: [],
+    content: 'New note',
+    data: { localKind: 'note' },
+    style: { backgroundColor: '#fffceb', autoFit: true },
+  })
+  store.setSelection([id])
+  store.beginEdit(id)
+}
+
 export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactNode {
   const order = props.useSession(snapshot => snapshot.chat.order)
   const nodes = props.useSession(snapshot => snapshot.chat.nodes)
-  const persisted = React.useMemo(() => readLayout(props.sessionId), [props.sessionId])
-  const store = React.useMemo(() => createCanvasStore(), [props.sessionId])
+  const store = React.useMemo(() => {
+    const scene = readScene(props.sessionId)
+    return createCanvasStore(scene ? { initial: scene } : {})
+  }, [props.sessionId])
   const [selection, setSelection] = React.useState<readonly (NodeId | string)[]>([])
   const [prompt, setPrompt] = React.useState('')
 
   React.useEffect(() => {
-    if (persisted.camera) store.setCamera(persisted.camera)
-  }, [persisted, store])
+    syncConversation(store, order, nodes)
+  }, [store, order, nodes])
 
   React.useEffect(() => {
-    syncConversation(store, order, nodes, persisted)
-  }, [store, order, nodes, persisted])
-
-  React.useEffect(() => {
-    const offSelection = store.subscribe('selection', ids => setSelection(ids))
-    const persist = () => writeLayout(props.sessionId, store)
-    const offChange = store.subscribe('change', persist)
-    const offCamera = store.subscribe('camera', persist)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const persistNow = () => writeScene(props.sessionId, store)
+    const schedulePersist = () => {
+      if (timer !== undefined) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = undefined
+        persistNow()
+      }, SAVE_DEBOUNCE_MS)
+    }
+    const offSelection = store.subscribe('selection', ids => {
+      setSelection(ids)
+      schedulePersist()
+    })
+    const offChange = store.subscribe('change', schedulePersist)
+    const offCamera = store.subscribe('camera', schedulePersist)
     setSelection(store.getSelection())
     return () => {
-      persist()
+      if (timer !== undefined) clearTimeout(timer)
+      persistNow()
       offSelection()
       offChange()
       offCamera()
@@ -292,7 +322,16 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
             background: 'rgba(255,255,255,.94)', boxShadow: '0 6px 22px rgba(0,0,0,.08)',
             fontSize: 12, color: '#333', border: '1px solid rgba(127,127,127,.18)',
           },
-        }, `${order.length} nodes · ${selection.length} selected`),
+        }, `${store.getNodeCount()} nodes · ${selection.length} selected`),
+        h('button', {
+          type: 'button',
+          onClick: () => addNote(store),
+          style: {
+            pointerEvents: 'auto', border: '1px solid rgba(127,127,127,.22)',
+            borderRadius: 10, padding: '7px 11px', cursor: 'pointer',
+            background: 'rgba(255,255,255,.94)', color: '#333',
+          },
+        }, '+ Note'),
         h('button', {
           type: 'button',
           disabled: selection.length === 0,
