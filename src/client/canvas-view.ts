@@ -11,6 +11,13 @@ import {
 } from '@canvas-harness/core'
 import { Canvas, CanvasProvider } from '@canvas-harness/react'
 import { fileBasename, producedFilePaths } from './file-context.js'
+import {
+  canvasReadyHistoricalImageBlob,
+  historicalAttachmentIdOfCanvasNode,
+  historicalImageRefs,
+  type HistoricalImageRef,
+  type LoadedHistoricalImage,
+} from './historical-image.js'
 import { imageNodeToPromptPart, type CanvasPromptPart } from './image-context.js'
 import { loadCanvasScene, readLegacyScene, saveCanvasScene } from './scene-persistence.js'
 
@@ -38,6 +45,7 @@ interface InfiniteCanvasViewProps {
   useSession<T>(selector: (snapshot: DshConversationSnapshot) => T): T
   inputActions: InputActionsLike
   sendSessionPrompt(parts: CanvasPromptPart[]): Promise<void>
+  loadHistoricalImage(ref: HistoricalImageRef): Promise<LoadedHistoricalImage>
   openHostPath(path: string): Promise<void>
 }
 
@@ -70,6 +78,8 @@ const FILE_X = 1760
 const FILE_W = 340
 const FILE_H = 104
 const FILE_GAP = 128
+const HISTORY_IMAGE_X = 2160
+const HISTORY_IMAGE_GAP = 300
 const SAVE_DEBOUNCE_MS = 180
 
 function blockText(value: unknown): string {
@@ -91,6 +101,10 @@ function chatText(node: DshChatNode): string {
   if (!data || typeof data !== 'object') return node.kind ?? 'Conversation node'
   const record = data as Record<string, unknown>
   if (typeof record.content === 'string') return record.content
+  if (Array.isArray(record.content)) {
+    const text = record.content.map(blockText).filter(Boolean).join('\n\n')
+    if (text) return text
+  }
   if (Array.isArray(record.blocks)) {
     const text = record.blocks.map(blockText).filter(Boolean).join('\n\n')
     if (text) return text
@@ -159,6 +173,80 @@ function selectedSingleFilePath(store: CanvasStore): string | undefined {
   if (store.getSelection().length !== 1) return undefined
   const id = store.getSelection()[0]
   return id === undefined ? undefined : filePathOfNode(store.getNode(id as NodeId))
+}
+
+function conversationHistoricalImages(
+  order: readonly string[],
+  nodes: ReadonlyMap<string, DshChatNode>,
+): HistoricalImageRef[] {
+  const refs: HistoricalImageRef[] = []
+  const seen = new Set<string>()
+  for (const key of order) {
+    const node = nodes.get(key)
+    if (!node) continue
+    for (const ref of historicalImageRefs(node)) {
+      if (seen.has(ref.attachmentId)) continue
+      seen.add(ref.attachmentId)
+      refs.push(ref)
+    }
+  }
+  return refs
+}
+
+async function syncHistoricalImages(
+  store: CanvasStore,
+  refs: readonly HistoricalImageRef[],
+  loading: Set<string>,
+  load: (ref: HistoricalImageRef) => Promise<LoadedHistoricalImage>,
+  cancelled: () => boolean,
+  onError: (error: unknown) => void,
+): Promise<void> {
+  const existing = new Set<string>()
+  let nextOrdinal = 0
+  for (const node of store.getAllNodes()) {
+    const attachmentId = historicalAttachmentIdOfCanvasNode(node)
+    if (attachmentId === undefined) continue
+    existing.add(attachmentId)
+    nextOrdinal++
+  }
+
+  for (const ref of refs) {
+    if (cancelled()) return
+    if (existing.has(ref.attachmentId) || loading.has(ref.attachmentId)) continue
+    loading.add(ref.attachmentId)
+    try {
+      const loaded = await load(ref)
+      if (cancelled()) return
+      const blob = await canvasReadyHistoricalImageBlob(loaded)
+      if (cancelled()) return
+      const id = await store.addImage({
+        src: blob,
+        x: HISTORY_IMAGE_X,
+        y: 72 + nextOrdinal * HISTORY_IMAGE_GAP,
+        alt: loaded.attachment.name ?? `DSH image ${nextOrdinal + 1}`,
+      })
+      const created = store.getNode(id)
+      const base = created?.data && typeof created.data === 'object'
+        ? created.data as Record<string, unknown>
+        : {}
+      store.updateNode(id, {
+        data: {
+          ...base,
+          localKind: 'dsh-historical-image',
+          dshAttachmentId: loaded.attachment.attachmentId,
+          dshAttachmentMediaType: loaded.attachment.mediaType,
+          dshAttachmentBytes: loaded.attachment.bytes,
+          dshAttachmentName: loaded.attachment.name ?? null,
+        },
+      })
+      existing.add(loaded.attachment.attachmentId)
+      nextOrdinal++
+    } catch (error) {
+      onError(error)
+    } finally {
+      loading.delete(ref.attachmentId)
+    }
+  }
 }
 
 function syncConversation(
@@ -238,8 +326,8 @@ function syncConversation(
       }
     })
   })
-  // Do not delete persisted DSH/File nodes merely because they are absent from
-  // the current paged Session window. The canvas outlives the loaded chat window.
+  // Do not delete persisted DSH/File/Image nodes merely because they are
+  // absent from the current paged Session window. The canvas outlives it.
 }
 
 function selectedContext(store: CanvasStore): string {
@@ -320,6 +408,7 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
     () => createCanvasStore(activeScene ? { initial: activeScene } : {}),
     [props.sessionId, activeScene],
   )
+  const loadingHistoricalImages = React.useMemo(() => new Set<string>(), [store])
   const [selectionCount, setSelectionCount] = React.useState(() => store.getSelection().length)
   const [selectedFilePath, setSelectedFilePath] = React.useState<string | undefined>(() => selectedSingleFilePath(store))
   const [tool, setTool] = React.useState<CanvasTool>('select')
@@ -343,6 +432,21 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
   React.useEffect(() => {
     syncConversation(store, order, nodes)
   }, [store, order, nodes])
+
+  React.useEffect(() => {
+    if (!storageReady) return undefined
+    let cancelled = false
+    const refs = conversationHistoricalImages(order, nodes)
+    void syncHistoricalImages(
+      store,
+      refs,
+      loadingHistoricalImages,
+      props.loadHistoricalImage,
+      () => cancelled,
+      error => setNotice(errorText(error)),
+    )
+    return () => { cancelled = true }
+  }, [store, order, nodes, storageReady, loadingHistoricalImages, props.loadHistoricalImage])
 
   React.useEffect(() => {
     if (!storageReady) return undefined
