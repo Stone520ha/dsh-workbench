@@ -32,14 +32,9 @@
     "lib/**/*.js",
     "lib/**/*.d.ts",
     "README.md",
-    "ARCHITECTURE.md",
-    "DSH_CONTRACT_AUDIT.md",
-    "TECH_SPIKE.md",
+    "README.zh-CN.md",
     "THIRD_PARTY_NOTICES.txt",
     "cordis.patch.yml",
-    "README.zh-CN.md",
-    "SECURITY.md",
-    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
@@ -63,13 +58,8 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-client-runtime": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.1-rc.2 <0.2.0",
-    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.1-rc.2 <0.2.0",
-    "@deepseek-ai/dsh-host-webserver": ">=0.1.1-rc.2 <0.2.0",
-    "@deepseek-ai/dsh-llm": ">=0.1.1-rc.2 <0.2.0",
-    "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2 <0.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -80,9 +70,6 @@
     "@deepseek-ai/dsh-client-ui-conversation": {
       "optional": true
     },
-    "@deepseek-ai/dsh-client-ui-layout": {
-      "optional": true
-    },
     "react": {
       "optional": true
     },
@@ -91,6 +78,11 @@
     }
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-agent": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-llm": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2 <0.2.0",
     "@types/node": "^22.15.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
