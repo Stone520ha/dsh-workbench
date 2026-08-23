@@ -17,9 +17,14 @@ test('publish manifest declares a DSH dynamic client package and closed exports'
   assert.equal(pkg.dsh.client.platform, 'web')
   assert.ok(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-layout'))
   assert.ok(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-conversation'))
+  assert.ok(pkg.files.includes('THIRD_PARTY_NOTICES.txt'))
   const patch = await readFile('cordis.patch.yml', 'utf8')
   assert.match(patch, /id: dsh-workbench/)
   assert.match(patch, /name: dsh-workbench/)
+  const notices = await readFile('THIRD_PARTY_NOTICES.txt', 'utf8')
+  assert.match(notices, /@canvas-harness\/core/u)
+  assert.match(notices, /@canvas-harness\/react/u)
+  assert.match(notices, /MIT/u)
 })
 
 test('lib/client.js registers one DSH loader factory and exposes only plugin entry face', async () => {
