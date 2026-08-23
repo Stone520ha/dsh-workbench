@@ -4,7 +4,7 @@ import { createInfiniteCanvasClientPlugin } from './canvas-client.js'
 
 const plugin = createInfiniteCanvasClientPlugin()
 
-export const inject = ['slots', 'sessions']
+export const inject = ['slots', 'sessions', 'workspaces']
 export function apply(ctx: ClientContext): void {
   plugin.apply(ctx as never)
 }
