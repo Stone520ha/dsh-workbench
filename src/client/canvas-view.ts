@@ -307,7 +307,7 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
     },
     'data-dsh-infinite-canvas': props.sessionId,
   },
-    h(CanvasProvider, { store },
+    h(CanvasProvider, { store, children: null },
       h(Canvas, {
         tool,
         background: { color: '#fbfbfc', pattern: 'dots', gap: 24 },
