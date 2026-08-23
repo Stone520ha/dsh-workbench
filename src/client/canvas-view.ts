@@ -5,10 +5,13 @@ import {
   fromSerialized,
   getContext,
   storeToJSON,
+  validateImageInput,
   type CanvasStore,
+  type NodeId,
   type Scene,
 } from '@canvas-harness/core'
 import { Canvas, CanvasProvider } from '@canvas-harness/react'
+import { imageNodeToPromptPart, type CanvasPromptPart } from './image-context.js'
 
 interface DshChatNode {
   key?: string
@@ -33,6 +36,7 @@ interface InfiniteCanvasViewProps {
   sessionId: string
   useSession<T>(selector: (snapshot: DshConversationSnapshot) => T): T
   inputActions: InputActionsLike
+  sendSessionPrompt(parts: CanvasPromptPart[]): Promise<void>
 }
 
 interface InputChangeEventLike {
@@ -43,6 +47,10 @@ interface InputKeyboardEventLike {
   key: string
   nativeEvent: { isComposing?: boolean }
   preventDefault(): void
+}
+
+interface ImageInputChangeEventLike {
+  target: { files: FileList | null; value: string }
 }
 
 type CanvasTool = 'select' | 'arrow'
@@ -203,9 +211,24 @@ function selectedContext(store: CanvasStore): string {
   ].join('\n')
 }
 
+function selectedImagePromptParts(store: CanvasStore): CanvasPromptPart[] {
+  const parts: CanvasPromptPart[] = []
+  for (const id of store.getSelection()) {
+    const node = store.getNode(id as NodeId)
+    if (!node) continue
+    const part = imageNodeToPromptPart(node)
+    if (part) parts.push(part)
+  }
+  return parts
+}
+
 function agentPrompt(store: CanvasStore, request: string): string {
   const context = selectedContext(store)
   return context ? `${context}\n\nMy request: ${request}` : request
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function addNote(store: CanvasStore): void {
@@ -238,6 +261,9 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
   const [selectionCount, setSelectionCount] = React.useState(() => store.getSelection().length)
   const [tool, setTool] = React.useState<CanvasTool>('select')
   const [prompt, setPrompt] = React.useState('')
+  const [sending, setSending] = React.useState(false)
+  const [notice, setNotice] = React.useState<string | null>(null)
+  const imageInputRef = React.useRef<HTMLInputElement | null>(null)
 
   React.useEffect(() => {
     syncConversation(store, order, nodes)
@@ -273,14 +299,61 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
     const context = selectedContext(store)
     if (context) props.inputActions.setDraft(`${context}\n\nMy request: `)
   }
+  const addCanvasImages = (files: readonly File[]): void => {
+    if (files.length === 0) return
+    try {
+      for (const file of files) validateImageInput(file)
+    } catch (error) {
+      setNotice(errorText(error))
+      return
+    }
+
+    setNotice(null)
+    setTool('select')
+    void (async () => {
+      const camera = store.getCamera()
+      const created: NodeId[] = []
+      for (let index = 0; index < files.length; index++) {
+        const file = files[index]
+        if (!file) continue
+        const id = await store.addImage({
+          src: file,
+          x: camera.x + 120 + (index % 3) * 36,
+          y: camera.y + 110 + Math.floor(index / 3) * 36,
+          alt: file.name,
+        })
+        created.push(id)
+      }
+      if (created.length > 0) store.setSelection(created)
+    })().catch(error => setNotice(errorText(error)))
+  }
   const askAgent = (): void => {
     const request = prompt.trim()
-    if (!request) return
-    props.inputActions.setDraft(agentPrompt(store, request))
-    // DSH's public InputActions is the only send path here. The canvas never
-    // starts its own model request or Agent Loop.
-    props.inputActions.submit()
-    setPrompt('')
+    if (!request || sending) return
+
+    let imageParts: CanvasPromptPart[]
+    try {
+      imageParts = selectedImagePromptParts(store)
+    } catch (error) {
+      setNotice(errorText(error))
+      return
+    }
+
+    const text = agentPrompt(store, request)
+    if (imageParts.length === 0) {
+      setNotice(null)
+      props.inputActions.setDraft(text)
+      props.inputActions.submit()
+      setPrompt('')
+      return
+    }
+
+    setSending(true)
+    setNotice(null)
+    void props.sendSessionPrompt([...imageParts, { type: 'text', text }])
+      .then(() => setPrompt(''))
+      .catch(error => setNotice(errorText(error)))
+      .finally(() => setSending(false))
   }
   const toolButton = (value: CanvasTool, label: string): React.ReactNode => h('button', {
     type: 'button',
@@ -313,10 +386,24 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
         background: { color: '#fbfbfc', pattern: 'dots', gap: 24 },
         selectionColor: '#4f6df5',
       }),
+      h('input', {
+        ref: imageInputRef,
+        type: 'file',
+        accept: 'image/png,image/jpeg',
+        multiple: true,
+        onChange: (event: ImageInputChangeEventLike) => {
+          const files = event.target.files ? Array.from(event.target.files) : []
+          event.target.value = ''
+          addCanvasImages(files)
+        },
+        style: { display: 'none' },
+        'aria-hidden': true,
+        tabIndex: -1,
+      }),
       h('div', {
         style: {
           position: 'absolute', top: 12, left: 12, right: 12, zIndex: 30,
-          display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'none',
+          display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'none', flexWrap: 'wrap',
         },
       },
         h('div', {
@@ -339,6 +426,15 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
         }, '+ Note'),
         h('button', {
           type: 'button',
+          onClick: () => imageInputRef.current?.click(),
+          style: {
+            pointerEvents: 'auto', border: '1px solid rgba(127,127,127,.22)',
+            borderRadius: 10, padding: '7px 11px', cursor: 'pointer',
+            background: 'rgba(255,255,255,.94)', color: '#333',
+          },
+        }, '+ Image'),
+        h('button', {
+          type: 'button',
           disabled: selectionCount === 0,
           onClick: useAsContext,
           style: {
@@ -348,6 +444,15 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
           },
         }, 'Use as context'),
       ),
+      notice ? h('div', {
+        role: 'status',
+        style: {
+          position: 'absolute', left: '50%', bottom: 78, zIndex: 31, transform: 'translateX(-50%)',
+          maxWidth: 'min(720px, calc(100% - 40px))', padding: '7px 10px', borderRadius: 10,
+          border: '1px solid rgba(190,70,70,.28)', background: 'rgba(255,248,248,.97)',
+          color: '#8d2f2f', fontSize: 12, boxShadow: '0 8px 24px rgba(0,0,0,.08)',
+        },
+      }, notice) : null,
       h('div', {
         style: {
           position: 'absolute', left: '50%', bottom: 18, zIndex: 31, transform: 'translateX(-50%)',
@@ -358,6 +463,7 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
       },
         h('input', {
           value: prompt,
+          disabled: sending,
           placeholder: selectionCount > 0
             ? `Ask Agent about ${selectionCount} selected object${selectionCount === 1 ? '' : 's'}…`
             : 'Ask Agent…',
@@ -376,14 +482,15 @@ export function InfiniteCanvasView(props: InfiniteCanvasViewProps): React.ReactN
         }),
         h('button', {
           type: 'button',
-          disabled: prompt.trim() === '',
+          disabled: prompt.trim() === '' || sending,
           onClick: askAgent,
           style: {
             border: 0, borderRadius: 10, padding: '8px 13px', fontWeight: 650,
-            background: prompt.trim() ? '#4f6df5' : 'rgba(127,127,127,.12)',
-            color: prompt.trim() ? '#fff' : '#999', cursor: prompt.trim() ? 'pointer' : 'default',
+            background: prompt.trim() && !sending ? '#4f6df5' : 'rgba(127,127,127,.12)',
+            color: prompt.trim() && !sending ? '#fff' : '#999',
+            cursor: prompt.trim() && !sending ? 'pointer' : 'default',
           },
-        }, 'Ask Agent'),
+        }, sending ? 'Sending…' : 'Ask Agent'),
       ),
     ),
   )
